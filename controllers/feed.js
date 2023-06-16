@@ -5,30 +5,25 @@ const { validationResult } = require("express-validator");
 const Post = require("../models/post");
 const User = require("../models/user");
 
-exports.getPosts = (req, res, next) => {
-  const currentPage = req.query.page;
-  const perPage = 2;
-  let totalItems;
-  Post.find()
-    .countDocuments()
-    .then((total) => {
-      totalItems = total;
-      return Post.find()
-        .skip((currentPage - 1) * perPage)
-        .limit(perPage);
-    })
-    .then((posts) => {
-      res.status(200).json({
-        result: posts,
-        count: totalItems,
-      });
-    })
-    .catch((err) => {
-      if (!err.statusCode) {
-        err.statusCode = 500;
-      }
-      next(err);
+exports.getPosts = async (req, res, next) => {
+  try {
+    const currentPage = req.query.page;
+    const perPage = 2;
+    const totalItems = await Post.find().countDocuments();
+
+    const posts = await Post.find()
+      .skip((currentPage - 1) * perPage)
+      .limit(perPage);
+    res.status(200).json({
+      result: posts,
+      count: totalItems,
     });
+  } catch (err) {
+    if (!err.statusCode) {
+      err.statusCode = 500;
+    }
+    next(err);
+  }
 };
 
 exports.createPost = (req, res, next) => {
@@ -39,20 +34,20 @@ exports.createPost = (req, res, next) => {
     throw error;
   }
 
-  // if (!req.file) {
-  //   const error = new Error("No file found");
-  //   error.statusCode = 422;
-  //   throw error;
-  // }
+  if (!req.file) {
+    const error = new Error("No file found");
+    error.statusCode = 422;
+    throw error;
+  }
 
-  // const imageUrl = req.file.path;
+  const imageUrl = req.file.path;
   const title = req.body.title;
   const content = req.body.content;
   let creator;
 
   const post = new Post({
     title: title,
-    // imageUrl: imageUrl,
+    imageUrl: imageUrl,
     content: content,
     creator: req.userId,
   });
@@ -132,6 +127,11 @@ exports.updatePost = (req, res, next) => {
         error.statusCode = 404;
         throw error;
       }
+      if (post.creator._id !== req.userId) {
+        const error = new Error("Not authorized");
+        error.statusCode = 403;
+        throw error;
+      }
       if (imageUrl !== post.imageUrl) {
         clearImage();
       }
@@ -160,11 +160,22 @@ exports.deletePost = (req, res, next) => {
         error.statusCode = 404;
         throw error;
       }
+      if (post.creator._id !== req.userId) {
+        const error = new Error("Not authorized");
+        error.statusCode = 403;
+        throw error;
+      }
       clearImage(post.imageUrl);
       return Post.findByIdAndRemove(postId);
     })
     .then((result) => {
-      console.log(result);
+      return User.findById(postId);
+    })
+    .then((user) => {
+      user.posts.pull(postId);
+      return user.save();
+    })
+    .then((result) => {
       res.status(200).json({ message: "Post deleted successfully" });
     })
     .catch((err) => {
